@@ -315,6 +315,7 @@ impl<'a, S: SignalVal, T: Time> Formula<'a, S, T> {
                 Some(FS::Until(ivl)) => {
                     /* Two children */
                     ivl.lb < ivl.ub
+                        && ivl.lb >= T::zero()
                         && self
                             .symbols
                             .get(2 * i + 1)
