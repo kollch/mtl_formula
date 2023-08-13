@@ -114,12 +114,12 @@ impl SignalVal for i32 {
     }
 }
 
-#[derive(Encode, Decode, Clone, Copy)]
+#[derive(Encode, Decode, Clone)]
 pub struct Interval<T: Time> {
-    closed_lb: bool,
-    closed_ub: bool,
-    lb: T,
-    ub: T,
+    pub closed_lb: bool,
+    pub closed_ub: bool,
+    pub lb: T,
+    pub ub: T,
 }
 
 impl<T: Time> Interval<T> {
