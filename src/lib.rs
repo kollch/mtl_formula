@@ -13,14 +13,15 @@ pub trait Zero {
 }
 
 pub trait Time:
-    Zero + Sized + Display + Sub<Output = Self> + Add<Output = Self> + PartialOrd + Copy
+    Zero + Sized + Display + Sub<Output = Self> + Add<Output = Self> + PartialOrd + Copy + Encode
 {
     fn approx_eq(&self, other: &Self) -> bool;
+    fn max_val() -> Self;
     fn is_max_val(&self) -> bool;
 }
 
 pub trait SignalVal:
-    Zero + Sized + Display + Sub<Output = Self> + Neg<Output = Self> + Copy
+    Zero + Sized + Display + Sub<Output = Self> + Neg<Output = Self> + Copy + Encode
 {
     fn max_val() -> Self;
     fn min_val() -> Self;
@@ -46,6 +47,10 @@ impl Time for f64 {
         (self - other).abs() < 1e-10
     }
 
+    fn max_val() -> Self {
+        f64::INFINITY
+    }
+
     fn is_max_val(&self) -> bool {
         self.is_infinite() && self.is_sign_positive()
     }
@@ -54,6 +59,10 @@ impl Time for f64 {
 impl Time for i32 {
     fn approx_eq(&self, other: &Self) -> bool {
         self == other
+    }
+
+    fn max_val() -> Self {
+        i32::MAX
     }
 
     fn is_max_val(&self) -> bool {
@@ -160,11 +169,11 @@ impl Display for Comparison {
     }
 }
 
-#[derive(Encode, Decode)]
+#[derive(Encode, Decode, Clone)]
 pub struct Predicate<S: SignalVal> {
-    id: String,
-    cmp: Comparison,
-    val: S,
+    pub id: String,
+    pub cmp: Comparison,
+    pub val: S,
 }
 
 impl<S: SignalVal> Predicate<S> {
@@ -206,8 +215,8 @@ impl<T: Time> Display for FormulaSymbol<T> {
 
 #[derive(Encode, Decode)]
 pub struct Formula<S: SignalVal + 'static, T: Time + 'static> {
-    symbols: Vec<Option<FormulaSymbol<T>>>,
-    preds: HashMap<String, Predicate<S>>,
+    pub symbols: Vec<Option<FormulaSymbol<T>>>,
+    pub preds: HashMap<String, Predicate<S>>,
 }
 
 impl<S: SignalVal, T: Time> Formula<S, T> {
@@ -345,8 +354,8 @@ pub fn export_to_file<P, S, T>(
 ) -> Result<usize, bincode::error::EncodeError>
 where
     P: AsRef<path::Path>,
-    S: SignalVal + Encode,
-    T: Time + Encode,
+    S: SignalVal,
+    T: Time,
 {
     let mut file =
         File::create(path).map_err(|e| bincode::error::EncodeError::Io { inner: e, index: 0 })?;
