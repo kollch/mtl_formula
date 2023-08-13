@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use bincode::{BorrowDecode, Decode, Encode};
 use std::{
     collections::HashMap,
     fmt::Display,
@@ -102,7 +102,7 @@ impl SignalVal for i32 {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
+#[derive(Encode, Decode, Clone, Copy)]
 pub struct Interval<T: Time> {
     closed_lb: bool,
     closed_ub: bool,
@@ -132,7 +132,7 @@ impl<T: Time> Display for Interval<T> {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
+#[derive(Encode, Decode, Clone, Copy)]
 pub enum Comparison {
     GT,
     LTE,
@@ -157,39 +157,39 @@ impl Display for Comparison {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct Predicate<'a, S: SignalVal> {
-    id: &'a str,
+#[derive(Encode, BorrowDecode)]
+pub struct Predicate<S: SignalVal> {
+    id: String,
     cmp: Comparison,
     val: S,
 }
 
-impl<'a, S: SignalVal> Predicate<'a, S> {
-    pub fn new(id: &'a str, cmp: &str, val: S) -> Self {
+impl<S: SignalVal> Predicate<S> {
+    pub fn new(id: &str, cmp: &str, val: S) -> Self {
         Self {
-            id,
+            id: String::from(id),
             cmp: Comparison::new(cmp).expect("Predicate creation failure"),
             val,
         }
     }
 }
 
-impl<'a, S: SignalVal> Display for Predicate<'a, S> {
+impl<S: SignalVal> Display for Predicate<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "x {} {}", self.cmp, self.val)
     }
 }
 
-#[derive(Serialize, Deserialize)]
-pub enum FormulaSymbol<'a, T: Time> {
+#[derive(Encode, BorrowDecode)]
+pub enum FormulaSymbol<T: Time> {
     True,
-    Pred(&'a str),
+    Pred(String),
     Neg,
     Or,
     Until(Interval<T>),
 }
 
-impl<'a, T: Time> Display for FormulaSymbol<'a, T> {
+impl<T: Time> Display for FormulaSymbol<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::True => write!(f, "true"),
@@ -201,15 +201,14 @@ impl<'a, T: Time> Display for FormulaSymbol<'a, T> {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct Formula<'a, S: SignalVal, T: Time> {
-    symbols: Vec<Option<FormulaSymbol<'a, T>>>,
-    #[serde(borrow)]
-    preds: HashMap<&'a str, Predicate<'a, S>>,
+#[derive(Encode, BorrowDecode)]
+pub struct Formula<S: SignalVal, T: Time + 'static> {
+    symbols: Vec<Option<FormulaSymbol<T>>>,
+    preds: HashMap<String, Predicate<S>>,
 }
 
-impl<'a, S: SignalVal, T: Time> Formula<'a, S, T> {
-    pub fn new(symbols: Vec<Option<FormulaSymbol<'a, T>>>, preds: Vec<Predicate<'a, S>>) -> Self {
+impl<S: SignalVal, T: Time> Formula<S, T> {
+    pub fn new(symbols: Vec<Option<FormulaSymbol<T>>>, preds: Vec<Predicate<S>>) -> Self {
         let mut map = HashMap::new();
         for pred in preds {
             map.insert(pred.id.clone(), pred)
@@ -345,14 +344,14 @@ mod tests {
     fn is_valid() {
         use FormulaSymbol as FS;
 
-        let mut phi: Formula<'_, _, f64> = Formula::new(
+        let mut phi: Formula<_, f64> = Formula::new(
             vec![
                 Some(FS::Or),
-                Some(FS::Pred("a")),
+                Some(FS::Pred(String::from("a"))),
                 Some(FS::Neg),
                 None,
                 None,
-                Some(FS::Pred("b")),
+                Some(FS::Pred(String::from("b"))),
             ],
             vec![Predicate::new("b", ">", 5.)],
         );
@@ -361,7 +360,8 @@ mod tests {
         phi.symbols.push(None);
         assert!(!phi.is_valid());
 
-        phi.preds.insert("a", Predicate::new("a", ">", 3.1));
+        phi.preds
+            .insert(String::from("a"), Predicate::new("a", ">", 3.1));
         assert!(phi.is_valid());
     }
 
@@ -369,25 +369,25 @@ mod tests {
     fn tree_string() {
         use FormulaSymbol as FS;
 
-        let phi: Formula<'_, _, f64> = Formula::new(
+        let phi: Formula<_, f64> = Formula::new(
             vec![
                 Some(FS::Or),
-                Some(FS::Pred("a")),
+                Some(FS::Pred(String::from("a"))),
                 Some(FS::Neg),
                 None,
                 None,
-                Some(FS::Pred("b")),
+                Some(FS::Pred(String::from("b"))),
                 None,
             ],
             vec![Predicate::new("b", ">", 5.), Predicate::new("a", ">", 3.1)],
         );
         assert_eq!(phi.tree_string(), r"(a) \/ (!(b))");
 
-        let phi: Formula<'_, _, f64> = Formula::new(
+        let phi: Formula<_, f64> = Formula::new(
             vec![
                 Some(FS::Until(Interval::new(true, 0., 5., false))),
                 Some(FS::True),
-                Some(FS::Pred("b")),
+                Some(FS::Pred(String::from("b"))),
             ],
             vec![Predicate::new("b", ">", 5.)],
         );
