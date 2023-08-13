@@ -1,8 +1,11 @@
-use bincode::{BorrowDecode, Decode, Encode};
+use bincode::{Decode, Encode};
 use std::{
     collections::HashMap,
-    fmt::Display,
+    fmt::{self, Display},
+    fs::File,
+    io,
     ops::{Add, Neg, Sub},
+    path,
 };
 
 pub trait Zero {
@@ -122,7 +125,7 @@ impl<T: Time> Interval<T> {
 }
 
 impl<T: Time> Display for Interval<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match (self.closed_lb, self.closed_ub) {
             (true, true) => write!(f, "[{},{}]", self.lb, self.ub),
             (true, false) => write!(f, "[{},{})", self.lb, self.ub),
@@ -149,7 +152,7 @@ impl Comparison {
 }
 
 impl Display for Comparison {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::GT => write!(f, ">"),
             Self::LTE => write!(f, "<="),
@@ -157,7 +160,7 @@ impl Display for Comparison {
     }
 }
 
-#[derive(Encode, BorrowDecode)]
+#[derive(Encode, Decode)]
 pub struct Predicate<S: SignalVal> {
     id: String,
     cmp: Comparison,
@@ -175,12 +178,12 @@ impl<S: SignalVal> Predicate<S> {
 }
 
 impl<S: SignalVal> Display for Predicate<S> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "x {} {}", self.cmp, self.val)
     }
 }
 
-#[derive(Encode, BorrowDecode)]
+#[derive(Encode, Decode)]
 pub enum FormulaSymbol<T: Time> {
     True,
     Pred(String),
@@ -190,7 +193,7 @@ pub enum FormulaSymbol<T: Time> {
 }
 
 impl<T: Time> Display for FormulaSymbol<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::True => write!(f, "true"),
             Self::Pred(id) => write!(f, "{}", id),
@@ -201,8 +204,8 @@ impl<T: Time> Display for FormulaSymbol<T> {
     }
 }
 
-#[derive(Encode, BorrowDecode)]
-pub struct Formula<S: SignalVal, T: Time + 'static> {
+#[derive(Encode, Decode)]
+pub struct Formula<S: SignalVal + 'static, T: Time + 'static> {
     symbols: Vec<Option<FormulaSymbol<T>>>,
     preds: HashMap<String, Predicate<S>>,
 }
@@ -334,6 +337,36 @@ impl<S: SignalVal, T: Time> Formula<S, T> {
         }
         return true;
     }
+}
+
+pub fn export_to_file<P, S, T>(
+    path: P,
+    contents: Vec<Formula<S, T>>,
+) -> Result<usize, bincode::error::EncodeError>
+where
+    P: AsRef<path::Path>,
+    S: SignalVal + Encode,
+    T: Time + Encode,
+{
+    let mut file =
+        File::create(path).map_err(|e| bincode::error::EncodeError::Io { inner: e, index: 0 })?;
+    let config = bincode::config::standard();
+    bincode::encode_into_std_write(contents, &mut file, config)
+}
+
+pub fn import_from_file<P, S, T>(path: P) -> Result<Vec<Formula<S, T>>, bincode::error::DecodeError>
+where
+    P: AsRef<path::Path>,
+    S: SignalVal + Decode,
+    T: Time + Decode,
+{
+    let file = File::open(path).map_err(|e| bincode::error::DecodeError::Io {
+        inner: e,
+        additional: usize::MAX,
+    })?;
+    let buffer = io::BufReader::new(file);
+    let config = bincode::config::standard();
+    bincode::decode_from_reader(buffer, config)
 }
 
 #[cfg(test)]
