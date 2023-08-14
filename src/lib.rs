@@ -219,6 +219,42 @@ pub struct Formula<S: SignalVal + 'static, T: Time + 'static> {
     pub preds: HashMap<String, Predicate<S>>,
 }
 
+impl Formula<i32, i32> {
+    pub fn sv_format(&self) -> String {
+        /* Expected SystemVerilog values for `FormulaSymbol`s:
+         * True: 0
+         * Pred: 1
+         * Neg: 2
+         * Or: 3
+         * Until: 4
+         */
+        use FormulaSymbol as FS;
+        let (formula_type, formula_val): (Vec<_>, Vec<_>) = self
+            .symbols
+            .iter()
+            .map(|o| match o {
+                Some(FS::True) | None => Ok((String::from("0"), String::from("0,0"))),
+                Some(FS::Pred(id)) => match self.preds[id] {
+                    Predicate {
+                        id: _,
+                        cmp: Comparison::GT,
+                        val,
+                    } => Ok((String::from("1"), format!("{},0", val))),
+                    _ => Err("predicate uses <= comparison"),
+                },
+                Some(FS::Neg) => Ok((String::from("2"), String::from("0,0"))),
+                Some(FS::Or) => Ok((String::from("3"), String::from("0,0"))),
+                Some(FS::Until(ivl)) => Ok((String::from("4"), format!("{},{}", ivl.lb, ivl.ub))),
+            })
+            .collect::<Result<Vec<_>, &'static str>>()
+            .expect("Cannot generate a SystemVerilog string from formula")
+            .into_iter()
+            .unzip();
+
+        format!("{},{}", formula_type.join(","), formula_val.join(","))
+    }
+}
+
 impl<S: SignalVal, T: Time> Formula<S, T> {
     pub fn new(symbols: Vec<Option<FormulaSymbol<T>>>, preds: Vec<Predicate<S>>) -> Self {
         let mut map = HashMap::new();
@@ -423,9 +459,10 @@ mod tests {
             ],
             vec![Predicate::new("b", ">", 5.), Predicate::new("a", ">", 3.1)],
         );
+        assert!(phi.is_valid());
         assert_eq!(phi.tree_string(), r"(a) \/ (!(b))");
 
-        let phi: Formula<_, f64> = Formula::new(
+        let phi = Formula::new(
             vec![
                 Some(FS::Until(Interval::new(true, 0., 5., false))),
                 Some(FS::True),
@@ -433,6 +470,27 @@ mod tests {
             ],
             vec![Predicate::new("b", ">", 5.)],
         );
+        assert!(phi.is_valid());
         assert_eq!(phi.tree_string(), "(true) U_[0,5) (b)");
+    }
+
+    #[test]
+    fn sv_format() {
+        use FormulaSymbol as FS;
+
+        let phi = Formula::new(
+            vec![
+                Some(FS::Until(Interval::new(true, 0, 5, false))),
+                Some(FS::True),
+                Some(FS::Neg),
+                None,
+                None,
+                Some(FS::Pred(String::from("a"))),
+                None,
+            ],
+            vec![Predicate::new("a", ">", 3)],
+        );
+        assert!(phi.is_valid());
+        assert_eq!(phi.sv_format(), "4,0,2,0,0,1,0,0,5,0,0,0,0,0,0,0,0,3,0,0,0");
     }
 }
