@@ -21,7 +21,7 @@ pub trait Time:
 }
 
 pub trait SignalVal:
-    Zero + Sized + Display + Sub<Output = Self> + Neg<Output = Self> + Copy + Encode
+    Zero + Sized + Display + Sub<Output = Self> + Neg<Output = Self> + PartialOrd + Copy + Encode
 {
     fn max_val() -> Self;
     fn min_val() -> Self;
