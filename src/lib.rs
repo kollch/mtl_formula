@@ -197,18 +197,46 @@ pub enum FormulaSymbol<T: Time> {
     True,
     Pred(String),
     Neg,
+    And,
     Or,
     Until(Interval<T>),
+    Future(Interval<T>),
+    Global(Interval<T>),
 }
 
 impl<T: Time> Display for FormulaSymbol<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let unbounded = |ivl: &Interval<T>| {
+            // Returns true if ivl is [0, inf), false otherwise
+            ivl.closed_lb && T::approx_eq(&ivl.lb, &T::zero()) && ivl.ub.is_max_val()
+        };
         match self {
             Self::True => write!(f, "true"),
             Self::Pred(id) => write!(f, "{}", id),
             Self::Neg => write!(f, "!"),
+            Self::And => write!(f, r"/\"),
             Self::Or => write!(f, r"\/"),
-            Self::Until(ivl) => write!(f, "U_{}", ivl),
+            Self::Until(ivl) => {
+                if unbounded(ivl) {
+                    write!(f, "U")
+                } else {
+                    write!(f, "U_{}", ivl)
+                }
+            }
+            Self::Future(ivl) => {
+                if unbounded(ivl) {
+                    write!(f, "<>")
+                } else {
+                    write!(f, "<>_{}", ivl)
+                }
+            }
+            Self::Global(ivl) => {
+                if unbounded(ivl) {
+                    write!(f, "[]")
+                } else {
+                    write!(f, "[]_{}", ivl)
+                }
+            }
         }
     }
 }
@@ -225,8 +253,11 @@ impl Formula<i32, i32> {
          * True: 0
          * Pred: 1
          * Neg: 2
-         * Or: 3
-         * Until: 4
+         * And: 3
+         * Or: 4
+         * Until: 5
+         * Future: 6
+         * Global: 7
          */
         use FormulaSymbol as FS;
         let (formula_type, formula_val): (Vec<_>, Vec<_>) = self
@@ -243,8 +274,11 @@ impl Formula<i32, i32> {
                     _ => Err("predicate uses <= comparison"),
                 },
                 Some(FS::Neg) => Ok((String::from("2"), String::from("0,0"))),
-                Some(FS::Or) => Ok((String::from("3"), String::from("0,0"))),
-                Some(FS::Until(ivl)) => Ok((String::from("4"), format!("{},{}", ivl.lb, ivl.ub))),
+                Some(FS::And) => Ok((String::from("3"), String::from("0,0"))),
+                Some(FS::Or) => Ok((String::from("4"), String::from("0,0"))),
+                Some(FS::Until(ivl)) => Ok((String::from("5"), format!("{},{}", ivl.lb, ivl.ub))),
+                Some(FS::Future(ivl)) => Ok((String::from("6"), format!("{},{}", ivl.lb, ivl.ub))),
+                Some(FS::Global(ivl)) => Ok((String::from("7"), format!("{},{}", ivl.lb, ivl.ub))),
             })
             .collect::<Result<Vec<_>, &'static str>>()
             .expect("Cannot generate a SystemVerilog string from formula")
@@ -280,12 +314,15 @@ impl<S: SignalVal, T: Time> Formula<S, T> {
         match &self.symbols[i] {
             Some(x @ (FS::True | FS::Pred(_))) => x.to_string(),
             Some(x @ FS::Neg) => format!("{}({})", x, self.subtree_string(2 * i + 1)),
-            Some(x @ (FS::Or | FS::Until(_))) => format!(
+            Some(x @ (FS::And | FS::Or | FS::Until(_))) => format!(
                 "({}) {} ({})",
                 self.subtree_string(2 * i + 1),
                 x,
                 self.subtree_string(2 * i + 2)
             ),
+            Some(x @ (FS::Future(_) | FS::Global(_))) => {
+                format!("{} ({})", x, self.subtree_string(2 * i + 1))
+            }
             None => String::from(""),
         }
     }
@@ -345,7 +382,7 @@ impl<S: SignalVal, T: Time> Formula<S, T> {
                             .flatten()
                             .is_none()
                 }
-                Some(FS::Or) => {
+                Some(FS::And | FS::Or) => {
                     /* Two children */
                     self.symbols
                         .get(2 * i + 1)
@@ -375,6 +412,23 @@ impl<S: SignalVal, T: Time> Formula<S, T> {
                             .map(Option::as_ref)
                             .flatten()
                             .is_some()
+                }
+                Some(FS::Future(ivl) | FS::Global(ivl)) => {
+                    /* Only a left child */
+                    ivl.lb < ivl.ub
+                        && ivl.lb >= T::zero()
+                        && self
+                            .symbols
+                            .get(2 * i + 1)
+                            .map(Option::as_ref)
+                            .flatten()
+                            .is_some()
+                        && self
+                            .symbols
+                            .get(2 * i + 2)
+                            .map(Option::as_ref)
+                            .flatten()
+                            .is_none()
                 }
             } {
                 return false;
