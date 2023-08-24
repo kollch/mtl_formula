@@ -4,7 +4,7 @@ use std::{
     fmt::{self, Display},
     fs::File,
     io,
-    ops::{Add, Neg, Sub},
+    ops::{Add, Sub},
     path,
 };
 
@@ -21,13 +21,14 @@ pub trait Time:
 }
 
 pub trait SignalVal:
-    Zero + Sized + Display + Sub<Output = Self> + Neg<Output = Self> + PartialOrd + Copy + Encode
+    Zero + Sized + Display + Sub<Output = Self> + PartialOrd + Copy + Encode
 {
     fn max_val() -> Self;
     fn min_val() -> Self;
     fn is_max_val(&self) -> bool;
     fn max(self, other: Self) -> Self;
     fn min(self, other: Self) -> Self;
+    fn neg(self) -> Self;
 }
 
 impl Zero for f64 {
@@ -90,6 +91,10 @@ impl SignalVal for f64 {
     fn min(self, other: Self) -> Self {
         f64::min(self, other)
     }
+
+    fn neg(self) -> Self {
+        -self
+    }
 }
 
 impl SignalVal for i32 {
@@ -111,6 +116,14 @@ impl SignalVal for i32 {
 
     fn min(self, other: Self) -> Self {
         Ord::min(self, other)
+    }
+
+    fn neg(self) -> Self {
+        if self == i32::MAX {
+            i32::MIN
+        } else {
+            self.saturating_neg()
+        }
     }
 }
 
@@ -199,6 +212,8 @@ pub enum FormulaSymbol<T: Time> {
     Neg,
     And,
     Or,
+    Implies,
+    Iff,
     Until(Interval<T>),
     Future(Interval<T>),
     Global(Interval<T>),
@@ -216,6 +231,8 @@ impl<T: Time> Display for FormulaSymbol<T> {
             Self::Neg => write!(f, "!"),
             Self::And => write!(f, r"/\"),
             Self::Or => write!(f, r"\/"),
+            Self::Implies => write!(f, "->"),
+            Self::Iff => write!(f, "<->"),
             Self::Until(ivl) => {
                 if unbounded(ivl) {
                     write!(f, "U")
@@ -255,9 +272,11 @@ impl Formula<i32, i32> {
          * Neg: 2
          * And: 3
          * Or: 4
-         * Until: 5
-         * Future: 6
-         * Global: 7
+         * Implies: 5
+         * Iff: 6
+         * Until: 7
+         * Future: 8
+         * Global: 9
          */
         use FormulaSymbol as FS;
         let (formula_type, formula_val): (Vec<_>, Vec<_>) = self
@@ -276,9 +295,11 @@ impl Formula<i32, i32> {
                 Some(FS::Neg) => Ok((String::from("2"), String::from("0,0"))),
                 Some(FS::And) => Ok((String::from("3"), String::from("0,0"))),
                 Some(FS::Or) => Ok((String::from("4"), String::from("0,0"))),
-                Some(FS::Until(ivl)) => Ok((String::from("5"), format!("{},{}", ivl.lb, ivl.ub))),
-                Some(FS::Future(ivl)) => Ok((String::from("6"), format!("{},{}", ivl.lb, ivl.ub))),
-                Some(FS::Global(ivl)) => Ok((String::from("7"), format!("{},{}", ivl.lb, ivl.ub))),
+                Some(FS::Implies) => Ok((String::from("5"), String::from("0,0"))),
+                Some(FS::Iff) => Ok((String::from("6"), String::from("0,0"))),
+                Some(FS::Until(ivl)) => Ok((String::from("7"), format!("{},{}", ivl.lb, ivl.ub))),
+                Some(FS::Future(ivl)) => Ok((String::from("8"), format!("{},{}", ivl.lb, ivl.ub))),
+                Some(FS::Global(ivl)) => Ok((String::from("9"), format!("{},{}", ivl.lb, ivl.ub))),
             })
             .collect::<Result<Vec<_>, &'static str>>()
             .expect("Cannot generate a SystemVerilog string from formula")
@@ -314,7 +335,7 @@ impl<S: SignalVal, T: Time> Formula<S, T> {
         match &self.symbols[i] {
             Some(x @ (FS::True | FS::Pred(_))) => x.to_string(),
             Some(x @ FS::Neg) => format!("{}({})", x, self.subtree_string(2 * i + 1)),
-            Some(x @ (FS::And | FS::Or | FS::Until(_))) => format!(
+            Some(x @ (FS::And | FS::Or | FS::Implies | FS::Iff | FS::Until(_))) => format!(
                 "({}) {} ({})",
                 self.subtree_string(2 * i + 1),
                 x,
@@ -382,7 +403,7 @@ impl<S: SignalVal, T: Time> Formula<S, T> {
                             .flatten()
                             .is_none()
                 }
-                Some(FS::And | FS::Or) => {
+                Some(FS::And | FS::Or | FS::Implies | FS::Iff) => {
                     /* Two children */
                     self.symbols
                         .get(2 * i + 1)
