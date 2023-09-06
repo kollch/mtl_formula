@@ -1,3 +1,5 @@
+//! A library for MTL formula representation. Can produce a string that is useable by DP-TaLiRo.
+
 use bincode::{Decode, Encode};
 use std::{
     collections::HashMap,
@@ -8,26 +10,42 @@ use std::{
     path,
 };
 
+/// The value zero for any numeric type which implements this.
 pub trait Zero {
+    /// Returns zero.
     fn zero() -> Self;
 }
 
+/// Meant for any type which may be used as a time value.
 pub trait Time:
     Zero + Sized + Display + Sub<Output = Self> + Add<Output = Self> + PartialOrd + Copy + Encode
 {
+    /// Determines if two values are "close" to each other (essentially the same value).
     fn approx_eq(&self, other: &Self) -> bool;
+    /// Returns the largest possible value of the type.
     fn max_val() -> Self;
+    /// Determines if the value is the largest possible.
     fn is_max_val(&self) -> bool;
 }
 
+/// Meant for any type which may be used as a signal value.
 pub trait SignalVal:
     Zero + Sized + Display + Sub<Output = Self> + PartialOrd + Copy + Encode
 {
+    /// Returns the largest possible value of the type.
     fn max_val() -> Self;
+    /// Returns the smallest possible value of the type.
     fn min_val() -> Self;
+    /// Determines if the value is the largest possible.
     fn is_max_val(&self) -> bool;
+    /// Finds the max of two values.
     fn max(self, other: Self) -> Self;
+    /// Finds the min of two values.
     fn min(self, other: Self) -> Self;
+    /// Negates the value.
+    ///
+    /// There may not be a straightforward negation of a value if it's an
+    /// extremum which doesn't exist when negated.
     fn neg(self) -> Self;
 }
 
@@ -127,15 +145,21 @@ impl SignalVal for i32 {
     }
 }
 
+/// An interval for temporal operators.
 #[derive(Encode, Decode, Clone)]
 pub struct Interval<T: Time> {
+    /// Closed lower bound
     pub closed_lb: bool,
+    /// Closed upper bound
     pub closed_ub: bool,
+    /// Lower bound value
     pub lb: T,
+    /// Upper bound value
     pub ub: T,
 }
 
 impl<T: Time> Interval<T> {
+    /// Creates a new interval.
     pub fn new(closed_lb: bool, lb: T, ub: T, closed_ub: bool) -> Self {
         Self {
             closed_lb,
@@ -157,9 +181,12 @@ impl<T: Time> Display for Interval<T> {
     }
 }
 
+/// Allowed comparison operators.
 #[derive(Encode, Decode, Clone, Copy)]
 pub enum Comparison {
+    /// Greater Than (>)
     GT,
+    /// Less Than Or Equal To (<=)
     LTE,
 }
 
@@ -182,14 +209,19 @@ impl Display for Comparison {
     }
 }
 
+/// A predicate of the form "x cmp val".
 #[derive(Encode, Decode, Clone)]
 pub struct Predicate<S: SignalVal> {
+    /// Represents the name of the predicate.
     pub id: String,
+    /// A comparison operator.
     pub cmp: Comparison,
+    /// The value that the signal compares to.
     pub val: S,
 }
 
 impl<S: SignalVal> Predicate<S> {
+    /// Creates a new predicate.
     pub fn new(id: &str, cmp: &str, val: S) -> Self {
         Self {
             id: String::from(id),
@@ -205,17 +237,28 @@ impl<S: SignalVal> Display for Predicate<S> {
     }
 }
 
+/// The possible things that a formula can consist of.
 #[derive(Encode, Decode)]
 pub enum FormulaSymbol<T: Time> {
+    /// True
     True,
+    /// Predicate referencing a predicate ID
     Pred(String),
+    /// Negation (!)
     Neg,
+    /// And (/\)
     And,
+    /// Or (\/)
     Or,
+    /// Implication (->)
     Implies,
+    /// Double implication (<->)
     Iff,
+    /// Until operator (U)
     Until(Interval<T>),
+    /// Future operator (F)
     Future(Interval<T>),
+    /// Global operator (G)
     Global(Interval<T>),
 }
 
@@ -258,26 +301,33 @@ impl<T: Time> Display for FormulaSymbol<T> {
     }
 }
 
+/// An MTL formula.
 #[derive(Encode, Decode)]
 pub struct Formula<S: SignalVal + 'static, T: Time + 'static> {
+    /// The components that make up the formula.
     pub symbols: Vec<Option<FormulaSymbol<T>>>,
+    /// A mapping of predicate IDs to the predicate itself.
     pub preds: HashMap<String, Predicate<S>>,
 }
 
 impl Formula<i32, i32> {
+    /// Converts a formula to a CSV format accepted by SystemVerilog.
+    ///
+    /// The expected SystemVerilog values for a [FormulaSymbol]:
+    ///
+    /// | [FormulaSymbol]                   | Value |
+    /// | --------------------------------- | ----- |
+    /// | [True](FormulaSymbol::True)       | 0     |
+    /// | [Pred](FormulaSymbol::Pred)       | 1     |
+    /// | [Neg](FormulaSymbol::Neg)         | 2     |
+    /// | [And](FormulaSymbol::And)         | 3     |
+    /// | [Or](FormulaSymbol::Or)           | 4     |
+    /// | [Implies](FormulaSymbol::Implies) | 5     |
+    /// | [Iff](FormulaSymbol::Iff)         | 6     |
+    /// | [Until](FormulaSymbol::Until)     | 7     |
+    /// | [Future](FormulaSymbol::Future)   | 8     |
+    /// | [Global](FormulaSymbol::Global)   | 9     |
     pub fn sv_format(&self) -> String {
-        /* Expected SystemVerilog values for `FormulaSymbol`s:
-         * True: 0
-         * Pred: 1
-         * Neg: 2
-         * And: 3
-         * Or: 4
-         * Implies: 5
-         * Iff: 6
-         * Until: 7
-         * Future: 8
-         * Global: 9
-         */
         use FormulaSymbol as FS;
         let (formula_type, formula_val): (Vec<_>, Vec<_>) = self
             .symbols
@@ -311,6 +361,7 @@ impl Formula<i32, i32> {
 }
 
 impl<S: SignalVal, T: Time> Formula<S, T> {
+    /// Creates a new formula.
     pub fn new(symbols: Vec<Option<FormulaSymbol<T>>>, preds: Vec<Predicate<S>>) -> Self {
         let mut map = HashMap::new();
         for pred in preds {
@@ -325,6 +376,7 @@ impl<S: SignalVal, T: Time> Formula<S, T> {
         }
     }
 
+    /// Returns a formula as a string accepted by DP-TaLiRo (MATLAB version).
     pub fn tree_string(&self) -> String {
         self.subtree_string(0)
     }
@@ -348,6 +400,7 @@ impl<S: SignalVal, T: Time> Formula<S, T> {
         }
     }
 
+    /// Determines if a formula is in a valid format.
     pub fn is_valid(&self) -> bool {
         use FormulaSymbol as FS;
 
@@ -459,6 +512,7 @@ impl<S: SignalVal, T: Time> Formula<S, T> {
     }
 }
 
+/// Exports a formula to a bincode file.
 pub fn export_to_file<P, S, T>(
     path: P,
     contents: Vec<Formula<S, T>>,
@@ -474,6 +528,7 @@ where
     bincode::encode_into_std_write(contents, &mut file, config)
 }
 
+/// Imports a formula from a bincode file.
 pub fn import_from_file<P, S, T>(path: P) -> Result<Vec<Formula<S, T>>, bincode::error::DecodeError>
 where
     P: AsRef<path::Path>,
