@@ -311,6 +311,80 @@ pub struct Formula<S: SignalVal + 'static, T: Time + 'static> {
 }
 
 impl Formula<i32, i32> {
+    /// Converts a formula to a Hex format accepted by TinyGarble Verilog.
+    ///
+    /// The expected Verilog values for a [FormulaSymbol]:
+    ///
+    /// | [FormulaSymbol]                   | Value |
+    /// | --------------------------------- | ----- |
+    /// | [True](FormulaSymbol::True)       | 0     |
+    /// | [Pred](FormulaSymbol::Pred)       | 1     |
+    /// | [Neg](FormulaSymbol::Neg)         | 2     |
+    /// | [And](FormulaSymbol::And)         | 3     |
+    /// | [Or](FormulaSymbol::Or)           | 4     |
+    /// | [Implies](FormulaSymbol::Implies) | 5     |
+    /// | [Iff](FormulaSymbol::Iff)         | 6     |
+    /// | [Until](FormulaSymbol::Until)     | 7     |
+    /// | [Future](FormulaSymbol::Future)   | 8     |
+    /// | [Global](FormulaSymbol::Global)   | 9     |
+    pub fn tg_v_format(&self) -> String {
+        use FormulaSymbol as FS;
+        let (formula_type, formula_val): (Vec<_>, Vec<_>) = self
+            .symbols
+            .iter()
+            .map(|o| match o {
+                Some(FS::True) | None => Ok((format!("{:01X}", 0), format!("{:08X}{:08X}", 0, 0))),
+                Some(FS::Pred(id)) => match self.preds[id] {
+                    Predicate {
+                        id: _,
+                        cmp: Comparison::GT,
+                        val,
+                    } => Ok((format!("{:01X}", 1), format!("{:08X}{:08X}", val, 0))),
+                    _ => Err("predicate uses <= comparison"),
+                },
+                Some(FS::Neg) => Ok((format!("{:01X}", 2), format!("{:08X}{:08X}", 0, 0))),
+                Some(FS::And) => Ok((format!("{:01X}", 3), format!("{:08X}{:08X}", 0, 0))),
+                Some(FS::Or) => Ok((format!("{:01X}", 4), format!("{:08X}{:08X}", 0, 0))),
+                Some(FS::Implies) => Ok((format!("{:01X}", 5), format!("{:08X}{:08X}", 0, 0))),
+                Some(FS::Iff) => Ok((format!("{:01X}", 6), format!("{:08X}{:08X}", 0, 0))),
+                Some(FS::Until(ivl)) => Ok((
+                    format!("{:01X}", 7),
+                    format!("{:08X}{:08X}", ivl.lb, ivl.ub),
+                )),
+                Some(FS::Future(ivl)) => Ok((
+                    format!("{:01X}", 8),
+                    format!("{:08X}{:08X}", ivl.lb, ivl.ub),
+                )),
+                Some(FS::Global(ivl)) => Ok((
+                    format!("{:01X}", 9),
+                    format!("{:08X}{:08X}", ivl.lb, ivl.ub),
+                )),
+            })
+            .collect::<Result<Vec<_>, &'static str>>()
+            .expect("Cannot generate a TinyGarble Verilog string from formula")
+            .into_iter()
+            .unzip();
+
+        format!("{}{}", formula_type.join(""), formula_val.join(""))
+    }
+}
+
+impl<S: SignalVal, T: Time> Formula<S, T> {
+    /// Creates a new formula.
+    pub fn new(symbols: Vec<Option<FormulaSymbol<T>>>, preds: Vec<Predicate<S>>) -> Self {
+        let mut map = HashMap::new();
+        for pred in preds {
+            map.insert(pred.id.clone(), pred)
+                .map(|pred| pred.id)
+                .ok_or("unique")
+                .expect_err("Duplicated predicate id");
+        }
+        Self {
+            symbols,
+            preds: map,
+        }
+    }
+
     /// Converts a formula to a CSV format.
     ///
     /// `delim` is the delimiter, commonly "," for CSVs.
@@ -396,80 +470,6 @@ impl Formula<i32, i32> {
             delim,
             formula_val.join(delim)
         )
-    }
-
-    /// Converts a formula to a Hex format accepted by TinyGarble Verilog.
-    ///
-    /// The expected Verilog values for a [FormulaSymbol]:
-    ///
-    /// | [FormulaSymbol]                   | Value |
-    /// | --------------------------------- | ----- |
-    /// | [True](FormulaSymbol::True)       | 0     |
-    /// | [Pred](FormulaSymbol::Pred)       | 1     |
-    /// | [Neg](FormulaSymbol::Neg)         | 2     |
-    /// | [And](FormulaSymbol::And)         | 3     |
-    /// | [Or](FormulaSymbol::Or)           | 4     |
-    /// | [Implies](FormulaSymbol::Implies) | 5     |
-    /// | [Iff](FormulaSymbol::Iff)         | 6     |
-    /// | [Until](FormulaSymbol::Until)     | 7     |
-    /// | [Future](FormulaSymbol::Future)   | 8     |
-    /// | [Global](FormulaSymbol::Global)   | 9     |
-    pub fn tg_v_format(&self) -> String {
-        use FormulaSymbol as FS;
-        let (formula_type, formula_val): (Vec<_>, Vec<_>) = self
-            .symbols
-            .iter()
-            .map(|o| match o {
-                Some(FS::True) | None => Ok((format!("{:01X}", 0), format!("{:08X}{:08X}", 0, 0))),
-                Some(FS::Pred(id)) => match self.preds[id] {
-                    Predicate {
-                        id: _,
-                        cmp: Comparison::GT,
-                        val,
-                    } => Ok((format!("{:01X}", 1), format!("{:08X}{:08X}", val, 0))),
-                    _ => Err("predicate uses <= comparison"),
-                },
-                Some(FS::Neg) => Ok((format!("{:01X}", 2), format!("{:08X}{:08X}", 0, 0))),
-                Some(FS::And) => Ok((format!("{:01X}", 3), format!("{:08X}{:08X}", 0, 0))),
-                Some(FS::Or) => Ok((format!("{:01X}", 4), format!("{:08X}{:08X}", 0, 0))),
-                Some(FS::Implies) => Ok((format!("{:01X}", 5), format!("{:08X}{:08X}", 0, 0))),
-                Some(FS::Iff) => Ok((format!("{:01X}", 6), format!("{:08X}{:08X}", 0, 0))),
-                Some(FS::Until(ivl)) => Ok((
-                    format!("{:01X}", 7),
-                    format!("{:08X}{:08X}", ivl.lb, ivl.ub),
-                )),
-                Some(FS::Future(ivl)) => Ok((
-                    format!("{:01X}", 8),
-                    format!("{:08X}{:08X}", ivl.lb, ivl.ub),
-                )),
-                Some(FS::Global(ivl)) => Ok((
-                    format!("{:01X}", 9),
-                    format!("{:08X}{:08X}", ivl.lb, ivl.ub),
-                )),
-            })
-            .collect::<Result<Vec<_>, &'static str>>()
-            .expect("Cannot generate a TinyGarble Verilog string from formula")
-            .into_iter()
-            .unzip();
-
-        format!("{}{}", formula_type.join(""), formula_val.join(""))
-    }
-}
-
-impl<S: SignalVal, T: Time> Formula<S, T> {
-    /// Creates a new formula.
-    pub fn new(symbols: Vec<Option<FormulaSymbol<T>>>, preds: Vec<Predicate<S>>) -> Self {
-        let mut map = HashMap::new();
-        for pred in preds {
-            map.insert(pred.id.clone(), pred)
-                .map(|pred| pred.id)
-                .ok_or("unique")
-                .expect_err("Duplicated predicate id");
-        }
-        Self {
-            symbols,
-            preds: map,
-        }
     }
 
     /// Returns a formula as a string accepted by DP-TaLiRo (MATLAB version).
