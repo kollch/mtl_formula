@@ -311,9 +311,18 @@ pub struct Formula<S: SignalVal + 'static, T: Time + 'static> {
 }
 
 impl Formula<i32, i32> {
-    /// Converts a formula to a CSV format accepted by SystemVerilog.
+    /// Converts a formula to a CSV format.
     ///
-    /// The expected SystemVerilog values for a [FormulaSymbol]:
+    /// `delim` is the delimiter, commonly "," for CSVs.
+    ///
+    /// A single [FormulaSymbol] is written as
+    /// "Value,Data1,Data2", where "Value" is a
+    /// value illustrated in the below table and
+    /// "Data1" and "Data2" are pieces of data
+    /// associated with Pred, Until, Future, and
+    /// Global.
+    ///
+    /// The produced values for a [FormulaSymbol]:
     ///
     /// | [FormulaSymbol]                   | Value |
     /// | --------------------------------- | ----- |
@@ -327,36 +336,66 @@ impl Formula<i32, i32> {
     /// | [Until](FormulaSymbol::Until)     | 7     |
     /// | [Future](FormulaSymbol::Future)   | 8     |
     /// | [Global](FormulaSymbol::Global)   | 9     |
-    pub fn sv_format(&self) -> String {
+    ///
+    /// For a [Pred](FormulaSymbol::Pred), Data1 and
+    /// Data2 are the following:
+    ///
+    /// | [Pred](FormulaSymbol::Pred) Format   | Data1 | Data2 |
+    /// | ------------------------------------ | ----- | ----- |
+    /// | id, cmp: [GT](Comparison::GT), val   | 0     | val   |
+    /// | id, cmp: [LTE](Comparison::LTE), val | 1     | val   |
+    ///
+    /// For a [Until](FormulaSymbol::Until),
+    /// [Future](FormulaSymbol::Future), or
+    /// [Global](FormulaSymbol::Global), the interval
+    /// being open or closed is ignored, Data1 is the
+    /// interval lower bound, and Data2 is the
+    /// interval upper bound.
+    pub fn csv_format(&self, delim: &str) -> String {
         use FormulaSymbol as FS;
         let (formula_type, formula_val): (Vec<_>, Vec<_>) = self
             .symbols
             .iter()
             .map(|o| match o {
-                Some(FS::True) | None => Ok((String::from("0"), String::from("0,0"))),
+                Some(FS::True) | None => Ok((String::from("0"), format!("0{}0", delim))),
                 Some(FS::Pred(id)) => match self.preds[id] {
                     Predicate {
                         id: _,
                         cmp: Comparison::GT,
                         val,
-                    } => Ok((String::from("1"), format!("{},0", val))),
-                    _ => Err("predicate uses <= comparison"),
+                    } => Ok((String::from("1"), format!("0{}{}", delim, val))),
+                    Predicate {
+                        id: _,
+                        cmp: Comparison::LTE,
+                        val,
+                    } => Ok((String::from("1"), format!("1{}{}", delim, val))),
                 },
-                Some(FS::Neg) => Ok((String::from("2"), String::from("0,0"))),
-                Some(FS::And) => Ok((String::from("3"), String::from("0,0"))),
-                Some(FS::Or) => Ok((String::from("4"), String::from("0,0"))),
-                Some(FS::Implies) => Ok((String::from("5"), String::from("0,0"))),
-                Some(FS::Iff) => Ok((String::from("6"), String::from("0,0"))),
-                Some(FS::Until(ivl)) => Ok((String::from("7"), format!("{},{}", ivl.lb, ivl.ub))),
-                Some(FS::Future(ivl)) => Ok((String::from("8"), format!("{},{}", ivl.lb, ivl.ub))),
-                Some(FS::Global(ivl)) => Ok((String::from("9"), format!("{},{}", ivl.lb, ivl.ub))),
+                Some(FS::Neg) => Ok((String::from("2"), format!("0{}0", delim))),
+                Some(FS::And) => Ok((String::from("3"), format!("0{}0", delim))),
+                Some(FS::Or) => Ok((String::from("4"), format!("0{}0", delim))),
+                Some(FS::Implies) => Ok((String::from("5"), format!("0{}0", delim))),
+                Some(FS::Iff) => Ok((String::from("6"), format!("0{}0", delim))),
+                Some(FS::Until(ivl)) => {
+                    Ok((String::from("7"), format!("{}{}{}", ivl.lb, delim, ivl.ub)))
+                }
+                Some(FS::Future(ivl)) => {
+                    Ok((String::from("8"), format!("{}{}{}", ivl.lb, delim, ivl.ub)))
+                }
+                Some(FS::Global(ivl)) => {
+                    Ok((String::from("9"), format!("{}{}{}", ivl.lb, delim, ivl.ub)))
+                }
             })
             .collect::<Result<Vec<_>, &'static str>>()
             .expect("Cannot generate a SystemVerilog string from formula")
             .into_iter()
             .unzip();
 
-        format!("{},{}", formula_type.join(","), formula_val.join(","))
+        format!(
+            "{}{}{}",
+            formula_type.join(delim),
+            delim,
+            formula_val.join(delim)
+        )
     }
 
     /// Converts a formula to a Hex format accepted by TinyGarble Verilog.
@@ -662,7 +701,7 @@ mod tests {
     }
 
     #[test]
-    fn sv_format() {
+    fn csv_format() {
         use FormulaSymbol as FS;
 
         let phi = Formula::new(
@@ -678,6 +717,29 @@ mod tests {
             vec![Predicate::new("a", ">", 3)],
         );
         assert!(phi.is_valid());
-        assert_eq!(phi.sv_format(), "4,0,2,0,0,1,0,0,5,0,0,0,0,0,0,0,0,3,0,0,0");
+        assert_eq!(
+            phi.csv_format(","),
+            "7,0,2,0,0,1,0,0,5,0,0,0,0,0,0,0,0,0,3,0,0"
+        );
+        assert_eq!(
+            phi.csv_format(" "),
+            "7 0 2 0 0 1 0 0 5 0 0 0 0 0 0 0 0 0 3 0 0"
+        );
+        let phi2 = Formula::new(
+            vec![
+                Some(FS::Until(Interval::new(true, 0, 5, false))),
+                Some(FS::True),
+                Some(FS::Neg),
+                None,
+                None,
+                Some(FS::Pred(String::from("b"))),
+                None,
+            ],
+            vec![Predicate::new("b", "<=", 3)],
+        );
+        assert_eq!(
+            phi2.csv_format(","),
+            "7,0,2,0,0,1,0,0,5,0,0,0,0,0,0,0,0,1,3,0,0"
+        );
     }
 }
