@@ -589,8 +589,8 @@ where
 pub fn import_from_file<P, S, T>(path: P) -> Result<Vec<Formula<S, T>>, bincode::error::DecodeError>
 where
     P: AsRef<path::Path>,
-    S: SignalVal + Decode,
-    T: Time + Decode,
+    S: SignalVal + Decode<()>,
+    T: Time + Decode<()>,
 {
     let file = File::open(path).map_err(|e| bincode::error::DecodeError::Io {
         inner: e,
